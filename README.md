@@ -1,31 +1,33 @@
 # yt-transcriptor
 
-Herramienta de línea de comandos en Python que descarga y guarda la transcripción (subtítulos) de cualquier video de YouTube con solo proporcionarle el enlace.
+Herramienta de línea de comandos en Python que descarga el audio de cualquier video de YouTube y genera una transcripción usando OpenAI Whisper, sin depender de los subtítulos del video.
 
 ---
 
-## ✨ Funcionalidades
+## Funcionalidades
 
 | Funcionalidad | Descripción |
 |---|---|
-| **Un solo argumento** | Solo necesitas pasar la URL del video; el programa hace todo lo demás. |
-| **Múltiples formatos de URL** | Soporta `youtube.com/watch?v=…`, `youtu.be/…`, `youtube.com/shorts/…` y `youtube.com/embed/…`. |
-| **Selección de idioma** | Intenta obtener la transcripción en español, inglés y portugués (en ese orden). Se puede personalizar. |
+| **Un solo argumento** | Solo necesitas pasar la URL del video; el programa descarga el audio y transcribe automáticamente. |
+| **Sin dependencia de subtítulos** | Usa OpenAI Whisper para transcribir el audio directamente, por lo que funciona aunque el video no tenga subtítulos. |
+| **Múltiples formatos de URL** | Soporta `youtube.com/watch?v=...`, `youtu.be/...`, `youtube.com/shorts/...` y `youtube.com/embed/...`. |
+| **Selección de modelo** | Permite elegir el modelo de Whisper según la precisión y velocidad deseadas (tiny, base, small, medium, large). |
+| **Detección automática de idioma** | Whisper detecta el idioma del audio automáticamente. Se puede indicar un idioma con `--language`. |
 | **Guardado automático** | Guarda la transcripción en un archivo `.txt` con el nombre `<video_id>_transcript.txt`. |
 | **Salida configurable** | Permite elegir el directorio de destino con `--output-dir`. |
-| **Impresión en terminal** | Opción `--print` para ver la transcripción directamente en la consola. |
+| **Impresión en terminal** | Opción `--print` para ver la transcripción directamente en la consola, además de guardarla. |
 | **Modo interactivo** | Si no se pasa la URL como argumento, el programa la solicita de forma interactiva. |
 
 ---
 
-## 📋 Requisitos
+## Requisitos
 
 - Python 3.10 o superior
-- El video de YouTube debe tener subtítulos/captions disponibles (manuales o generados automáticamente).
+- [ffmpeg](https://ffmpeg.org/download.html) instalado y disponible en el PATH del sistema (requerido por Whisper y yt-dlp para la conversion de audio)
 
 ---
 
-## 🚀 Instalación
+## Instalación
 
 ```bash
 # 1. Clona el repositorio
@@ -37,13 +39,19 @@ python -m venv .venv
 source .venv/bin/activate   # Linux / macOS
 .venv\Scripts\activate      # Windows
 
-# 3. Instala las dependencias
+# 3. Instala las dependencias de Python
 pip install -r requirements.txt
 ```
 
+Instala ffmpeg si aun no lo tienes:
+
+- **Ubuntu / Debian**: `sudo apt install ffmpeg`
+- **macOS**: `brew install ffmpeg`
+- **Windows**: descarga el instalador desde https://ffmpeg.org/download.html y agrega el binario al PATH.
+
 ---
 
-## 🎬 Uso
+## Uso
 
 ### Forma básica — pasar la URL como argumento
 
@@ -55,20 +63,23 @@ python transcriptor.py "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
 
 ```bash
 python transcriptor.py
-# 🔗 Ingresa la URL del video de YouTube: https://youtu.be/dQw4w9WgXcQ
+# Ingresa la URL del video de YouTube: https://youtu.be/dQw4w9WgXcQ
 ```
 
 ### Opciones disponibles
 
 ```
-uso: transcriptor [-h] [--lang LANG [LANG ...]] [--output-dir DIR] [--print] [url]
+uso: transcriptor [-h] [--model {tiny,base,small,medium,large}]
+                  [--language LANG] [--output-dir DIR] [--print] [url]
 
 argumentos posicionales:
   url                    URL del video de YouTube
 
 opciones:
   -h, --help             muestra esta ayuda y sale
-  --lang LANG [LANG …]   Idioma(s) preferidos (por defecto: es en pt)
+  --model MODEL          Modelo de Whisper a usar (por defecto: base)
+  --language LANG       Código de idioma ISO-639-1 (ej: es, en, pt).
+                         Si no se indica, Whisper lo detecta automáticamente.
   --output-dir DIR       Directorio de salida (por defecto: directorio actual)
   --print                Imprime la transcripción en la terminal
 ```
@@ -76,8 +87,11 @@ opciones:
 ### Ejemplos adicionales
 
 ```bash
-# Obtener transcripción en inglés primero, luego español
-python transcriptor.py "https://www.youtube.com/watch?v=XXXX" --lang en es
+# Usar el modelo large para mayor precisión
+python transcriptor.py "https://www.youtube.com/watch?v=XXXX" --model large
+
+# Indicar el idioma del video para mayor velocidad y precisión
+python transcriptor.py "https://youtu.be/XXXX" --language es
 
 # Guardar en una carpeta específica
 python transcriptor.py "https://youtu.be/XXXX" --output-dir ./transcripciones
@@ -85,13 +99,27 @@ python transcriptor.py "https://youtu.be/XXXX" --output-dir ./transcripciones
 # Ver la transcripción en la terminal (el archivo también se guarda en disco)
 python transcriptor.py "https://www.youtube.com/watch?v=XXXX" --print
 
-# Combinación: guardar en carpeta e imprimir en terminal
-python transcriptor.py "https://youtu.be/XXXX" --output-dir ./out --print
+# Combinación: modelo small, idioma inglés, guardar en carpeta e imprimir
+python transcriptor.py "https://youtu.be/XXXX" --model small --language en --output-dir ./out --print
 ```
 
 ---
 
-## 📂 Estructura del proyecto
+## Modelos de Whisper
+
+| Modelo | Velocidad | Precisión | Memoria requerida |
+|--------|-----------|-----------|-------------------|
+| tiny   | Muy rápido | Básica    | ~1 GB              |
+| base   | Rápido     | Buena     | ~1 GB              |
+| small  | Moderado   | Muy buena | ~2 GB              |
+| medium | Lento      | Alta      | ~5 GB              |
+| large  | Muy lento  | Máxima    | ~10 GB             |
+
+El modelo `base` es el valor por defecto y ofrece un buen equilibrio entre velocidad y precisión para la mayoría de los casos.
+
+---
+
+## Estructura del proyecto
 
 ```
 yt-transcriptor/
@@ -102,14 +130,14 @@ yt-transcriptor/
 
 ---
 
-## ⚠️ Limitaciones
+## Limitaciones
 
-- Requiere que el video tenga subtítulos habilitados en YouTube (ya sean manuales o generados automáticamente).
-- Videos con subtítulos completamente deshabilitados mostrarán un error descriptivo.
-- El contenido de la transcripción depende de la calidad de los subtítulos disponibles en YouTube.
+- La primera ejecución descarga el modelo de Whisper seleccionado (puede tardar según el tamaño del modelo y la velocidad de conexión). Los modelos se almacenan en caché para usos posteriores.
+- La calidad de la transcripción depende de la claridad del audio del video.
+- Videos con restricciones geográficas o de edad pueden no ser descargables.
 
 ---
 
-## 📄 Licencia
+## Licencia
 
 Este proyecto es de uso libre. Consulta el archivo `LICENSE` si existe, o contáctate con el autor para más información.

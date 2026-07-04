@@ -1,16 +1,18 @@
 #!/usr/bin/env python3
-"""YouTube Video Transcriptor — fetches captions/subtitles from a YouTube video URL."""
+"""YouTube Video Transcriptor — downloads audio and transcribes with OpenAI Whisper."""
 
 import sys
 import re
 import os
+import glob
+import tempfile
 
-from youtube_transcript_api import YouTubeTranscriptApi, TranscriptsDisabled, NoTranscriptFound
-from youtube_transcript_api.formatters import TextFormatter
+import yt_dlp
+import whisper
 
+DEFAULT_WHISPER_MODEL = "base"
 
-# Preferred language order for transcript lookup
-DEFAULT_LANGUAGES = ["es", "en", "pt"]
+WHISPER_MODELS = ("tiny", "base", "small", "medium", "large")
 
 
 def extract_video_id(url: str) -> str:
@@ -36,40 +38,64 @@ def extract_video_id(url: str) -> str:
     )
 
 
-def fetch_transcript(video_id: str, languages: list | None = None) -> tuple[str, str]:
-    """Fetch and format the transcript for a YouTube video.
+def download_audio(url: str, output_dir: str) -> str:
+    """Download the best available audio from a YouTube URL into output_dir.
 
-    Returns a tuple of (formatted_text, language_code).
-    Tries each language in *languages* before falling back to any available transcript.
+    Returns the path to the downloaded audio file.
+    Raises RuntimeError if the download fails.
     """
-    if languages is None:
-        languages = DEFAULT_LANGUAGES
+    outtmpl = os.path.join(output_dir, "audio.%(ext)s")
+    ydl_opts = {
+        "format": "bestaudio/best",
+        "outtmpl": outtmpl,
+        "postprocessors": [
+            {
+                "key": "FFmpegExtractAudio",
+                "preferredcodec": "mp3",
+            }
+        ],
+        "quiet": True,
+        "no_warnings": True,
+    }
 
     try:
-        transcript_list = YouTubeTranscriptApi.list_transcripts(video_id)
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            ydl.download([url])
+    except yt_dlp.utils.DownloadError as exc:
+        raise RuntimeError(f"No se pudo descargar el audio: {exc}") from exc
 
-        # Try requested languages first (manual then auto-generated)
-        try:
-            transcript = transcript_list.find_transcript(languages)
-        except NoTranscriptFound:
-            # Fall back to the first available transcript (any language)
-            transcript = next(iter(transcript_list))
-
-        raw = transcript.fetch()
-        formatter = TextFormatter()
-        text = formatter.format_transcript(raw)
-        return text, transcript.language_code
-
-    except TranscriptsDisabled:
+    # Locate the output file (extension may vary if ffmpeg is unavailable)
+    matches = glob.glob(os.path.join(output_dir, "audio.*"))
+    if not matches:
         raise RuntimeError(
-            "Los subtítulos están deshabilitados para este video. "
-            "No es posible obtener la transcripción."
+            "yt-dlp no produjo ningún archivo de audio. "
+            "Verifica que ffmpeg esté instalado y el video sea accesible."
         )
-    except NoTranscriptFound:
-        raise RuntimeError(
-            f"No se encontró una transcripción en los idiomas: {languages}. "
-            "Prueba con otro video o especifica un idioma diferente con --lang."
-        )
+    return matches[0]
+
+
+def transcribe_audio(
+    audio_path: str,
+    model_name: str = DEFAULT_WHISPER_MODEL,
+    language: str | None = None,
+) -> str:
+    """Transcribe an audio file using OpenAI Whisper.
+
+    Args:
+        audio_path: Path to the audio file.
+        model_name: Whisper model size (tiny, base, small, medium, large).
+        language: Optional ISO-639-1 language code hint (e.g. 'es', 'en').
+                  When None, Whisper auto-detects the language.
+
+    Returns:
+        The full transcript as a plain-text string.
+    """
+    model = whisper.load_model(model_name)
+    kwargs = {}
+    if language:
+        kwargs["language"] = language
+    result = model.transcribe(audio_path, **kwargs)
+    return result["text"].strip()
 
 
 def save_transcript(text: str, video_id: str, output_dir: str = ".") -> str:
@@ -82,20 +108,28 @@ def save_transcript(text: str, video_id: str, output_dir: str = ".") -> str:
     return filepath
 
 
-def transcribe(url: str, languages: list | None = None, output_dir: str = ".") -> str:
-    """High-level helper: extract ID → fetch transcript → save to file.
+def transcribe(
+    url: str,
+    model_name: str = DEFAULT_WHISPER_MODEL,
+    language: str | None = None,
+    output_dir: str = ".",
+) -> str:
+    """Download audio, transcribe with Whisper, and save the result.
 
     Returns the path of the saved transcript file.
     """
     video_id = extract_video_id(url)
-    print(f"🎬 Video ID detectado: {video_id}")
+    print(f"Video ID: {video_id}")
 
-    print("⏳ Obteniendo transcripción…")
-    text, lang = fetch_transcript(video_id, languages)
-    print(f"✅ Transcripción obtenida (idioma: {lang})")
+    with tempfile.TemporaryDirectory() as tmpdir:
+        print("Descargando audio...")
+        audio_path = download_audio(url, tmpdir)
+
+        print(f"Transcribiendo con el modelo Whisper '{model_name}'...")
+        text = transcribe_audio(audio_path, model_name=model_name, language=language)
 
     filepath = save_transcript(text, video_id, output_dir)
-    print(f"💾 Transcripción guardada en: {filepath}")
+    print(f"Transcripción guardada en: {filepath}")
     return filepath
 
 
@@ -104,12 +138,11 @@ def transcribe(url: str, languages: list | None = None, output_dir: str = ".") -
 # ---------------------------------------------------------------------------
 
 def _parse_args(argv: list[str]):
-    """Minimal argument parser (no external dependencies)."""
     import argparse
 
     parser = argparse.ArgumentParser(
         prog="transcriptor",
-        description="Transcribe videos de YouTube a partir de su URL.",
+        description="Transcribe videos de YouTube a partir de su URL usando OpenAI Whisper.",
     )
     parser.add_argument(
         "url",
@@ -117,13 +150,22 @@ def _parse_args(argv: list[str]):
         help="URL del video de YouTube (ej: https://www.youtube.com/watch?v=XXXX)",
     )
     parser.add_argument(
-        "--lang",
-        nargs="+",
-        default=DEFAULT_LANGUAGES,
+        "--model",
+        default=DEFAULT_WHISPER_MODEL,
+        choices=WHISPER_MODELS,
+        help=(
+            "Modelo de Whisper a utilizar. "
+            "Modelos más grandes son más precisos pero más lentos. "
+            f"Por defecto: {DEFAULT_WHISPER_MODEL}"
+        ),
+    )
+    parser.add_argument(
+        "--language",
+        default=None,
         metavar="LANG",
         help=(
-            "Idioma(s) preferidos para la transcripción, en orden de prioridad. "
-            f"Por defecto: {DEFAULT_LANGUAGES}"
+            "Código de idioma ISO-639-1 para guiar a Whisper (ej: es, en, pt). "
+            "Si no se indica, Whisper detecta el idioma automáticamente."
         ),
     )
     parser.add_argument(
@@ -150,19 +192,24 @@ def main(argv: list[str] | None = None) -> int:
     # If no URL was passed as argument, ask interactively
     if not args.url:
         try:
-            args.url = input("🔗 Ingresa la URL del video de YouTube: ").strip()
+            args.url = input("Ingresa la URL del video de YouTube: ").strip()
         except (EOFError, KeyboardInterrupt):
             print("\nCancelado.")
             return 1
 
     if not args.url:
-        print("❌ No se proporcionó una URL.", file=sys.stderr)
+        print("Error: no se proporcionó una URL.", file=sys.stderr)
         return 1
 
     try:
-        filepath = transcribe(args.url, languages=args.lang, output_dir=args.output_dir)
+        filepath = transcribe(
+            args.url,
+            model_name=args.model,
+            language=args.language,
+            output_dir=args.output_dir,
+        )
     except (ValueError, RuntimeError) as exc:
-        print(f"❌ Error: {exc}", file=sys.stderr)
+        print(f"Error: {exc}", file=sys.stderr)
         return 1
 
     if args.print_transcript:
