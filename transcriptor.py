@@ -170,9 +170,12 @@ def _parse_args(argv: list[str]):
     )
     parser.add_argument(
         "--output-dir",
-        default=".",
+        default=None,
         metavar="DIR",
-        help="Directorio donde se guardará el archivo de transcripción. Por defecto: directorio actual.",
+        help=(
+            "Directorio donde se guardará el archivo de transcripción. "
+            "Si no se indica, se abre una ventana para seleccionarlo manualmente."
+        ),
     )
     parser.add_argument(
         "--print",
@@ -181,6 +184,31 @@ def _parse_args(argv: list[str]):
         help="Imprime la transcripción completa en la terminal además de guardarla.",
     )
     return parser.parse_args(argv)
+
+
+def ask_output_dir() -> str:
+    """Open a GUI folder-picker dialog and return the selected directory.
+
+    Falls back to the current directory (".") if tkinter is not available
+    (e.g. headless server, no display) or the user closes/cancels the dialog.
+    """
+    try:
+        import tkinter as tk
+        from tkinter import filedialog
+    except ImportError:
+        return "."
+
+    try:
+        root = tk.Tk()
+        root.withdraw()
+        root.attributes("-topmost", True)
+        directory = filedialog.askdirectory(
+            title="Selecciona el directorio donde guardar la transcripción"
+        )
+        root.destroy()
+        return directory if directory else "."
+    except tk.TclError:
+        return "."
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -200,6 +228,10 @@ def main(argv: list[str] | None = None) -> int:
     if not args.url:
         print("Error: no se proporcionó una URL.", file=sys.stderr)
         return 1
+
+    # If no output directory was given, open a GUI folder-picker dialog
+    if args.output_dir is None:
+        args.output_dir = ask_output_dir()
 
     try:
         filepath = transcribe(

@@ -14,6 +14,7 @@ Herramienta de línea de comandos en Python que descarga el audio de cualquier v
 | **Selección de modelo** | Permite elegir el modelo de Whisper según la precisión y velocidad deseadas (tiny, base, small, medium, large). |
 | **Detección automática de idioma** | Whisper detecta el idioma del audio automáticamente. Se puede indicar un idioma con `--language`. |
 | **Guardado automático** | Guarda la transcripción en un archivo `.txt` con el nombre `<video_id>_transcript.txt`. |
+| **Selector de carpeta (GUI)** | Si no se indica `--output-dir`, se abre automáticamente una ventana emergente para elegir dónde guardar el archivo. |
 | **Salida configurable** | Permite elegir el directorio de destino con `--output-dir`. |
 | **Impresión en terminal** | Opción `--print` para ver la transcripción directamente en la consola, además de guardarla. |
 | **Modo interactivo** | Si no se pasa la URL como argumento, el programa la solicita de forma interactiva. |
@@ -80,7 +81,8 @@ opciones:
   --model MODEL          Modelo de Whisper a usar (por defecto: base)
   --language LANG       Código de idioma ISO-639-1 (ej: es, en, pt).
                          Si no se indica, Whisper lo detecta automáticamente.
-  --output-dir DIR       Directorio de salida (por defecto: directorio actual)
+  --output-dir DIR       Directorio de salida. Si se omite, se abre una ventana
+                         emergente para seleccionarlo manualmente.
   --print                Imprime la transcripción en la terminal
 ```
 
